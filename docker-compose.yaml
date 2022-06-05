@@ -1,0 +1,196 @@
+version: "3.4"
+
+networks:
+    localnet:
+        attachable: true
+
+x-airflow-common:
+  &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.0.1}
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__ENABLE_XCOM_PICKLING: 'true'
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./input:/mnt/
+  user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-50000}"
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+  networks:
+      - localnet
+
+
+services:
+    pgAdmin:
+        restart: always
+        image: dpage/pgadmin4
+        container_name: "dev-pgadmin"
+        ports:
+            - "8000:80"
+        environment:
+            PGADMIN_DEFAULT_EMAIL: deproject@proj.com
+            PGADMIN_DEFAULT_PASSWORD: password123
+        volumes:
+            - ./pgadmin:/var/lib/pgadmin
+        networks:
+            - localnet
+          
+    dev-postgres:
+        restart: always
+        image: postgres
+        container_name: "dev-postgres"
+        ports:
+            - "5432:5432"
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password123
+            POSTGRES_DB: deproject
+        healthcheck:
+            test: ["CMD", "pg_isready", "-U", "airflow"]
+            interval: 5s
+            retries: 5
+        volumes:
+            - ./pgvol:/var/lib/postgresql/data
+        networks:
+            - localnet
+          
+
+    datascience-notebook:
+        image:  jupyter/minimal-notebook
+        restart: always
+        volumes:
+            - ./notebooks:/home/jovyan/
+                
+        environment:
+            JUPYTER_ENABLE_LAB: "yes"
+            JUPYTER_TOKEN : "password123"
+            GRANT_SUDO: "yes"
+            NOTEBOOK_ARGS: "--allow-root"
+            
+        ports:
+            - "8888:8888"
+
+        container_name:   ds-jupyter
+        networks:
+            - localnet
+
+    postgres:
+      image: postgres:13
+      container_name: airflow-postgres
+      environment:
+        POSTGRES_USER: airflow
+        POSTGRES_PASSWORD: airflow
+        POSTGRES_DB: airflow
+      volumes:
+        - ./af_pgvol:/var/lib/postgresql/data
+      healthcheck:
+        test: ["CMD", "pg_isready", "-U", "airflow"]
+        interval: 5s
+        retries: 5
+      restart: always
+      networks:
+          - localnet 
+
+    redis:
+      image: redis:latest
+      container_name: redis
+      ports:
+        - 6379:6379
+      healthcheck:
+        test: ["CMD", "redis-cli", "ping"]
+        interval: 5s
+        timeout: 30s
+        retries: 50
+      restart: always
+      networks:
+          - localnet
+
+    airflow-webserver:
+      <<: *airflow-common
+      command: webserver
+      container_name: airflow-webserver
+      ports:
+        - 8080:8080
+      healthcheck:
+        test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+        interval: 10s
+        timeout: 10s
+        retries: 5
+      restart: always
+
+    airflow-scheduler:
+      <<: *airflow-common
+      command: scheduler
+      restart: always
+
+    airflow-worker:
+      <<: *airflow-common
+      command: celery worker
+      restart: always
+
+    airflow-init:
+      <<: *airflow-common
+      command: version
+      environment:
+        <<: *airflow-common-env
+        _AIRFLOW_DB_UPGRADE: 'true'
+        _AIRFLOW_WWW_USER_CREATE: 'true'
+        _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+        _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+
+    flower:
+      <<: *airflow-common
+      command: celery flower
+      ports:
+        - 5555:5555
+      healthcheck:
+        test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
+        interval: 10s
+        timeout: 10s
+        retries: 5
+      restart: always
+
+    elasticsearch:
+      image: docker.elastic.co/elasticsearch/elasticsearch:$ELASTIC_VERSION
+      container_name: elasticsearch
+      environment:
+        - bootstrap.memory_lock=true
+        - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+        - discovery.type=single-node
+      ulimits:
+        memlock:
+          soft: -1
+          hard: -1
+      mem_limit: 2g
+      volumes:
+        - ./esdata1:/usr/share/elasticsearch/data
+      ports:
+        - 9200:9200
+      networks:
+        - localnet
+      restart: always
+
+    kibana:
+      image: docker.elastic.co/kibana/kibana:$ELASTIC_VERSION
+      container_name: kibana
+      ports:
+        - 5601:5601
+      networks:
+        - localnet
+      restart: always
+
+
+
+
