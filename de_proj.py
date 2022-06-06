@@ -43,7 +43,7 @@ def push_to_sql(ti):
     df_temp.to_sql('original_data',engine ,if_exists='replace', index=False)
 
 
-def load_and_add_class(ti):
+def load_and_add_class():
     logger.info('Loading Data and adding our class label')
     engine = db_connection()
     df = pd.read_sql('SELECT * FROM original_data', engine)
@@ -52,9 +52,9 @@ def load_and_add_class(ti):
     
     return df.copy()
 
-def feature_selection(ti):
+def feature_selection(df):
     logger.info('Dropping the not used feature for this training')
-    df = ti.xcom_pull(task_ids='load_and_add_class')
+    #df = ti.xcom_pull(task_ids='load_and_add_class')
     #select_feature = ['Customer Branch', 'Customer ID', 'Gender', 'Date of Birth', 'Age','Marital Status','Income','Business Line', 'Segment', 'Sector', 'Industry','Relationship Type', 'Join date','KYC Risk Level', 'Customer Status', 'Total Customer Deposits','Serial Number', 'Sales Branch', 'Main Product','Currency','Outstanding Balance','Outstanding Balance EQVL', 'Booking Date', 'Maturity Date','Approved Interest Rate ', 'Interest Rate', 'Interest Rate Band','Interest Rate Type','Remaining Tenor','Tenor Band', 'DBR Band','Payment Type','Payment Frequency', 'Approved Salary ', 'Salary Band','Delinquency Bucket','Delinquency Reason', 'Application Score', 'Finance to Value','Down Payment', 'Salesman', 'Loan Status']
     
     df = df.drop(['Customer ID', 'Customer Branch', 'Age','Income','Serial Number',
@@ -68,9 +68,9 @@ def feature_selection(ti):
 
     return df.copy()
 
-def feature_rename(ti):
+def feature_rename(df):
     logger.info('start with renaming the column names as part of preprocess')
-    df = ti.xcom_pull(task_ids='feature_selection')
+    #df = ti.xcom_pull(task_ids='feature_selection')
     df.rename(columns= {
                         'Gender': 'Gender',
                         'Age Band': 'AgeBand', 
@@ -107,9 +107,9 @@ def feature_rename(ti):
     return df.copy()
 
 
-def data_preproces(ti):
+def data_preproces(df):
     logger.info('Starting with data preprocessing')
-    df = ti.xcom_pull(task_ids='feature_rename')
+    #df = ti.xcom_pull(task_ids='feature_rename')
     df = df.drop(['MonthlyPayment', 'CustomerStatus', 'RelationshipType'], axis=1)
     df.drop(['SalaryBand','BusinessLine', 'OutstandingBalance','InterestRateType','RemainingTenor','DelinquencyBucket'], axis=1, inplace=True)
     df.drop(df[df['Industry'].isnull()].index, inplace = True)
@@ -124,8 +124,21 @@ def data_preproces(ti):
 
     return df.copy()
 
+
+def load_and_feature_engineering():
+    df = load_and_add_class()
+    df = feature_selection(df)
+    df = feature_rename(df)
+    df = data_preproces(df)
+
+    return df.copy()
+
+
+
+
 def handling_mising_data(ti):
-    df = ti.xcom_pull(task_ids='data_preproces')
+    #df = ti.xcom_pull(task_ids='data_preproces')
+    df = ti.xcom_pull(task_ids='load_and_feature_engineering')
     logger.info('Filling the missing values, and drop rows of missing values with less than 0.001')
     logger.info('Printing the shape of the DF to confirm that there is no changes in these values')
     df.drop(df[df['MaritalStatus'].isnull()].index, inplace = True)
@@ -135,7 +148,8 @@ def handling_mising_data(ti):
     df.loc[df.EmployerCategory.isna(), "EmployerCategory"] = "Others"
     df.loc[df.EmployerCategory.str.contains("عسكري", case =False), "EmployerCategory"] = "Military"
     df['PaymentFrequency'].fillna('M', inplace=True)
-    df['EmploymentStatus'].fillna('FULL TIME EMPLOYED', inplace=True)
+    #df['EmploymentStatus'].fillna('FULL TIME EMPLOYED', inplace=True)
+    df['EmploymentStatus'].fillna('Other', inplace=True)
     df['TotalCustomerDeposits'].fillna(value=df['TotalCustomerDeposits'].mean(), inplace=True)
     logger.info(df.info())
     logger.info(df.head())
@@ -239,11 +253,15 @@ def cf_mat_plot(y_test,y_pred):
     print('Precision score', metrics.precision_score(y_test, y_pred))
     print('Recall score', metrics.recall_score(y_test, y_pred))
     print('F1 score:',f1_score(y_test, y_pred))
+    score_dict = {'accuracy':accuracy_score(y_test, y_pred), 'precision':metrics.precision_score(y_test, y_pred),
+     'recall':metrics.recall_score(y_test, y_pred), 'f1_score': f1_score(y_test, y_pred) }
+    return score_dict
 
 def split_and_balance_training(ti):
     logger.info('We will need to load the scaled data from SQL in order to proceed with training the models')
-    engine = db_connection()
-    df = pd.read_sql('SELECT * FROM ready_data', engine)
+    #engine = db_connection()
+    #df = pd.read_sql('SELECT * FROM ready_data', engine)
+    df = ti.xcom_pull(task_ids='scaling')
     from imblearn.over_sampling import SMOTE
     from sklearn.model_selection import train_test_split
     #from collection.Collection import Counter
@@ -260,6 +278,14 @@ def split_and_balance_training(ti):
 
     return x_smote, y_smote, x_test, y_test
 
+def push_to_elastic(ti):
+    df = ti.xcom_pull(task_ids='handling_mising_data')
+    from elasticsearch import Elasticsearch, helpers
+    Host='elasticsearch'
+    Port=9200
+    es = Elasticsearch(host = Host, port = Port)
+    helpers.bulk(es, df.to_dict(orient='records') , index='bankdata')
+
 def dt_train_test(ti):
     x_smote, y_smote, x_test, y_test = ti.xcom_pull(task_ids='split_and_balance_training')
     from sklearn import tree
@@ -271,7 +297,9 @@ def dt_train_test(ti):
 
 def dt_score(ti):
     y_test, y_pred = ti.xcom_pull(task_ids='dt_train_test')
-    cf_mat_plot(y_test, y_pred)
+    dt_score_dict = cf_mat_plot(y_test, y_pred)
+    dt_score_dict['model_name'] = 'DT'
+    return dt_score_dict
 
 def rf_train_test(ti):
     x_smote, y_smote, x_test, y_test = ti.xcom_pull(task_ids='split_and_balance_training')
@@ -285,7 +313,9 @@ def rf_train_test(ti):
 
 def rf_score(ti):
     y_test, y_pred = ti.xcom_pull(task_ids='rf_train_test')
-    cf_mat_plot(y_test, y_pred)
+    rf_score_dict = cf_mat_plot(y_test, y_pred)
+    rf_score_dict['model_name'] = 'RF'
+    return rf_score_dict
 
 def bagging_train_test(ti):
     x_smote, y_smote, x_test, y_test = ti.xcom_pull(task_ids='split_and_balance_training')
@@ -298,7 +328,9 @@ def bagging_train_test(ti):
 
 def bagging_score(ti):
     y_test, y_pred = ti.xcom_pull(task_ids='bagging_train_test')
-    cf_mat_plot(y_test, y_pred)
+    bagging_score_dict = cf_mat_plot(y_test, y_pred)
+    bagging_score_dict['model_name'] = 'Bagging'
+    return bagging_score_dict
 
 def xgboost_train_test(ti):
     x_smote, y_smote, x_test, y_test = ti.xcom_pull(task_ids='split_and_balance_training')
@@ -315,17 +347,43 @@ def xgboost_train_test(ti):
 
 def xgboost_score(ti):
     y_test, y_pred = ti.xcom_pull(task_ids='xgboost_train_test')
-    cf_mat_plot(y_test, y_pred)
+    xgboost_score_dict = cf_mat_plot(y_test, y_pred)
+    xgboost_score_dict['model_name'] = 'XGBoost'
+    return xgboost_score_dict
+
+def push_score_to_es(ti):
+    dt_score_dict = ti.xcom_pull(task_ids='dt_score')
+    rf_score_dict = ti.xcom_pull(task_ids='rf_score')
+    bagging_score_dict = ti.xcom_pull(task_ids='bagging_score')
+    xgboost_score_dict = ti.xcom_pull(task_ids='xgboost_score')
+    score_list = [dt_score_dict, rf_score_dict, bagging_score_dict, xgboost_score_dict]
+    from elasticsearch import Elasticsearch, helpers
+    Host='elasticsearch'
+    Port=9200
+    es = Elasticsearch(host = Host, port = Port)
+    actions = [
+        {
+        "_index" : "modelscore",
+        "_type" : "external",
+        "_id" : str(score['model_name']),
+        "_source" : score
+        }
+        for score in score_list
+        ]
+    helpers.bulk(es,actions)
+#    for i in range(0, len(score_list)):
+#        logger.info(f'Pushing the following data {score_list[i]}')
+#        helpers.bulk(es, score_list[i], index='scoremodel')
 
 
-def write_to_csv(ti):
-    df = ti.xcom_pull(task_ids='handling_mising_data')
+#def write_to_csv(ti):
+#    df = ti.xcom_pull(task_ids='handling_mising_data')
     #df.to_csv('/mnt/scaled_df.csv', index=False)
-    df.to_csv('/mnt/before_encoding_df.csv', index=False)
+#    df.to_csv('/mnt/before_encoding_df.csv', index=False)
 
-def write_to_csv2(ti):
-    df = ti.xcom_pull(task_ids='scaling')
-    df.to_csv('/mnt/scaled_df.csv', index=False)
+#def write_to_csv2(ti):
+#    df = ti.xcom_pull(task_ids='scaling')
+#    df.to_csv('/mnt/scaled_df.csv', index=False)
     #df.to_csv('/mnt/before_encoding_df.csv', index=False)
 
 with DAG(
@@ -334,13 +392,14 @@ with DAG(
     schedule_interval=timedelta(hours=2),
     catchup=False
 ) as dag:
-    installing_modules = BashOperator(task_id='installing_modules', bash_command='pip install imbalanced-learn==0.8.1 scikit-learn matplot seaborn collection xgboost')
+    #installing_modules = BashOperator(task_id='installing_modules', bash_command='pip install imbalanced-learn==0.8.1 scikit-learn matplot seaborn collection xgboost elasticsearch==7.5.1')
     load_csv = PythonOperator(task_id='load_csv', python_callable=load_csv)
     push_to_sql = PythonOperator(task_id='push_to_sql', python_callable=push_to_sql)
-    load_and_add_class = PythonOperator(task_id='load_and_add_class', python_callable=load_and_add_class)
-    feature_selection = PythonOperator(task_id='feature_selection', python_callable=feature_selection)
-    feature_rename = PythonOperator(task_id='feature_rename', python_callable=feature_rename)
-    data_preproces = PythonOperator(task_id='data_preproces', python_callable=data_preproces)
+    #load_and_add_class = PythonOperator(task_id='load_and_add_class', python_callable=load_and_add_class)
+    #feature_selection = PythonOperator(task_id='feature_selection', python_callable=feature_selection)
+    #feature_rename = PythonOperator(task_id='feature_rename', python_callable=feature_rename)
+    #data_preproces = PythonOperator(task_id='data_preproces', python_callable=data_preproces)
+    load_and_feature_engineering = PythonOperator(task_id='load_and_feature_engineering', python_callable=load_and_feature_engineering)
     handling_mising_data = PythonOperator(task_id='handling_mising_data', python_callable=handling_mising_data)
     encoding = PythonOperator(task_id='encoding', python_callable=encoding)
     scaling = PythonOperator(task_id='scaling', python_callable=scaling)
@@ -356,9 +415,14 @@ with DAG(
     bagging_score = PythonOperator(task_id='bagging_score', python_callable=bagging_score)
     xgboost_train_test = PythonOperator(task_id='xgboost_train_test', python_callable=xgboost_train_test)
     xgboost_score = PythonOperator(task_id='xgboost_score', python_callable=xgboost_score)
+    push_to_elastic = PythonOperator(task_id='push_to_elastic', python_callable=push_to_elastic)
+    push_score_to_es = PythonOperator(task_id='push_score_to_es', python_callable=push_score_to_es)
 
-    installing_modules >> load_csv >> push_to_sql >> load_and_add_class >> feature_selection >> feature_rename >> data_preproces >> handling_mising_data >> encoding >> scaling >> push_readyDF_to_sql
-    scaling >> split_and_balance_training >> dt_train_test >> dt_score
-    scaling >> split_and_balance_training >> rf_train_test >> rf_score
-    scaling >> split_and_balance_training >> bagging_train_test >> bagging_score
-    scaling >> split_and_balance_training >> xgboost_train_test >> xgboost_score
+
+    #load_csv >> push_to_sql >> load_and_add_class >> feature_selection >> feature_rename >> data_preproces >> handling_mising_data >> encoding >> scaling >> push_readyDF_to_sql
+    load_csv >> push_to_sql >> load_and_feature_engineering >> handling_mising_data >> encoding >> scaling >> push_readyDF_to_sql
+    handling_mising_data >> push_to_elastic
+    scaling >> split_and_balance_training >> dt_train_test >> dt_score >> push_score_to_es
+    scaling >> split_and_balance_training >> rf_train_test >> rf_score >> push_score_to_es
+    scaling >> split_and_balance_training >> bagging_train_test >> bagging_score >> push_score_to_es
+    scaling >> split_and_balance_training >> xgboost_train_test >> xgboost_score >> push_score_to_es

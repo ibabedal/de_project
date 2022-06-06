@@ -14,3 +14,5 @@ cp projdata.csv input/
 
 docker-compose up -d airflow-init
 docker-compose up -d
+worker_id=$(docker ps | grep worker | awk '{print $1}')
+docker exec -it $worker_id pip install imbalanced-learn==0.8.1 scikit-learn seaborn xgboost elasticsearch==7.5.1
