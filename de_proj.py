@@ -335,16 +335,16 @@ with DAG(
     catchup=False
 ) as dag:
     installing_modules = BashOperator(task_id='installing_modules', bash_command='pip install imbalanced-learn==0.8.1 scikit-learn matplot seaborn collection xgboost')
-    #load_csv = PythonOperator(task_id='load_csv', python_callable=load_csv)
-    #push_to_sql = PythonOperator(task_id='push_to_sql', python_callable=push_to_sql)
-    #load_and_add_class = PythonOperator(task_id='load_and_add_class', python_callable=load_and_add_class)
-    #feature_selection = PythonOperator(task_id='feature_selection', python_callable=feature_selection)
-    #feature_rename = PythonOperator(task_id='feature_rename', python_callable=feature_rename)
-    #data_preproces = PythonOperator(task_id='data_preproces', python_callable=data_preproces)
-    #handling_mising_data = PythonOperator(task_id='handling_mising_data', python_callable=handling_mising_data)
-    #encoding = PythonOperator(task_id='encoding', python_callable=encoding)
-    #scaling = PythonOperator(task_id='scaling', python_callable=scaling)
-    #push_readyDF_to_sql = PythonOperator(task_id='push_readyDF_to_sql', python_callable=push_readyDF_to_sql)
+    load_csv = PythonOperator(task_id='load_csv', python_callable=load_csv)
+    push_to_sql = PythonOperator(task_id='push_to_sql', python_callable=push_to_sql)
+    load_and_add_class = PythonOperator(task_id='load_and_add_class', python_callable=load_and_add_class)
+    feature_selection = PythonOperator(task_id='feature_selection', python_callable=feature_selection)
+    feature_rename = PythonOperator(task_id='feature_rename', python_callable=feature_rename)
+    data_preproces = PythonOperator(task_id='data_preproces', python_callable=data_preproces)
+    handling_mising_data = PythonOperator(task_id='handling_mising_data', python_callable=handling_mising_data)
+    encoding = PythonOperator(task_id='encoding', python_callable=encoding)
+    scaling = PythonOperator(task_id='scaling', python_callable=scaling)
+    push_readyDF_to_sql = PythonOperator(task_id='push_readyDF_to_sql', python_callable=push_readyDF_to_sql)
     #write_to_csv = PythonOperator(task_id='write_to_csv', python_callable=write_to_csv)
     #write_to_csv2 = PythonOperator(task_id='write_to_csv2', python_callable=write_to_csv2)
     split_and_balance_training = PythonOperator(task_id='split_and_balance_training', python_callable=split_and_balance_training)
@@ -357,8 +357,8 @@ with DAG(
     xgboost_train_test = PythonOperator(task_id='xgboost_train_test', python_callable=xgboost_train_test)
     xgboost_score = PythonOperator(task_id='xgboost_score', python_callable=xgboost_score)
 
-    #installing_modules >> load_csv >> push_to_sql >> load_and_add_class >> feature_selection >> feature_rename >> data_preproces >> handling_mising_data >> encoding >> scaling >> push_readyDF_to_sql >> split_and_balance_training
-    split_and_balance_training >> dt_train_test >> dt_score
-    split_and_balance_training >> rf_train_test >> rf_score
-    split_and_balance_training >> bagging_train_test >> bagging_score
-    split_and_balance_training >> xgboost_train_test >> xgboost_score
+    installing_modules >> load_csv >> push_to_sql >> load_and_add_class >> feature_selection >> feature_rename >> data_preproces >> handling_mising_data >> encoding >> scaling >> push_readyDF_to_sql
+    scaling >> split_and_balance_training >> dt_train_test >> dt_score
+    scaling >> split_and_balance_training >> rf_train_test >> rf_score
+    scaling >> split_and_balance_training >> bagging_train_test >> bagging_score
+    scaling >> split_and_balance_training >> xgboost_train_test >> xgboost_score
